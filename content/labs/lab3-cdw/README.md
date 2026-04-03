@@ -53,7 +53,7 @@ View the schema and first few rows to get a quick overview of the columns and da
 
 ```sql
 SELECT * 
-FROM USERNAME.telco_iceberg_kafka 
+FROM telcodb.telco_data_curated 
 LIMIT 10;
 ```
 
@@ -63,7 +63,7 @@ Count the total number of rows to understand the size of the dataset.
 
 ```sql
 SELECT COUNT(*) 
-FROM USERNAME.telco_iceberg_kafka;
+FROM telcodb.telco_data_curated;
 ```
 
 ![Cloudera Data Warehouse Query 2](cdw_vw_query_2.png)
@@ -72,7 +72,7 @@ Examine the distribution of key categorical columns like `gender` and the target
 
 ```sql
 SELECT Churn, COUNT(*) AS count 
-FROM USERNAME.telco_iceberg_kafka 
+FROM telcodb.telco_data_curated 
 GROUP BY Churn;
 ```
 
@@ -90,7 +90,7 @@ SELECT
   COUNT(*) AS total_customers,
   SUM(CASE WHEN Churn = 'Yes' THEN 1 ELSE 0 END) AS churned_customers,
   CAST(SUM(CASE WHEN Churn = 'Yes' THEN 1 ELSE 0 END) AS DOUBLE) / COUNT(*) AS churn_rate
-FROM USERNAME.telco_iceberg_kafka
+FROM telcodb.telco_data_curated
 GROUP BY Contract
 ORDER BY churn_rate DESC;
 ```
@@ -104,7 +104,7 @@ SELECT
   Churn,
   AVG(CAST(MonthlyCharges AS DOUBLE)) AS avg_monthly_charges,
   AVG(CAST(TotalCharges AS DOUBLE)) AS avg_total_charges
-FROM USERNAME.telco_iceberg_kafka
+FROM telcodb.telco_data_curated
 GROUP BY Churn;
 ```
 
@@ -124,7 +124,7 @@ SELECT
   COUNT(*) AS total_customers,
   SUM(CASE WHEN Churn = 'Yes' THEN 1 ELSE 0 END) AS churned_customers,
   CAST(SUM(CASE WHEN Churn = 'Yes' THEN 1 ELSE 0 END) AS DOUBLE) / COUNT(*) AS churn_rate
-FROM USERNAME.telco_iceberg_kafka
+FROM telcodb.telco_data_curated
 GROUP BY
   CASE
     WHEN CAST(tenure AS INT) <= 12 THEN '0-12 months'
@@ -138,60 +138,6 @@ ORDER BY tenure_group;
 
 ![Cloudera Data Warehouse Query 6](cdw_vw_query_6.png)
 
-#### Showcasing Iceberg Features
-
-Explore the properties of the `telco_iceberg_kafka` table and confirm it is and Iceberg table by exuting the query below in Hue. Note in particular the `Table Type`, `SerDe Library`, and `Location` properties.
-
-```sql
-DESCRIBE FORMATTED USERNAME.telco_iceberg_kafka;
-```
-
-![Cloudera Data Warehouse Query 7](cdw_vw_query_7.png)
-
-**_Schema Evolution:_** Iceberg supports schema changes without rewriting all data files. For example, you can add a new column to an existing table. This is much more efficient and less disruptive than with older table formats.
-
-This query adds a new column to the table. In Iceberg, this is a fast, metadata-only change that doesn't require rewriting any existing data files.
-
-```sql
-ALTER TABLE USERNAME.telco_iceberg_kafka 
-ADD COLUMNS (CustomerSegment STRING);
-
--- preview the table to show the newly added column
-SELECT * FROM USERNAME.telco_iceberg_kafka LIMIT 10;
-```
-
-![Cloudera Data Warehouse Query 8](cdw_vw_query_8.png)
-
-**_Row-Level Operations (DML):_** Perform efficient updates and deletes on specific rows. This is a key feature for modern data warehousing, especially for compliance requirements like GDPR. For example, to delete a specific customer's data, you can run:
-
-```sql
-DELETE 
-FROM USERNAME.telco_iceberg_kafka 
-WHERE customerID = '3074-GQWYX';
-```
-
-![Cloudera Data Warehouse Query 8](cdw_vw_query_9.png)
-
-**_Time Travel:_** This feature allows you to query the table as it existed at a past point in time. It is useful for auditing, debugging, and creating reproducible reports.
-
-* First, run this command to see the history of changes and identify the snapshot ID you want to revert to.
-    * You will see output that includes the snapshot ID for each change. You can select the snapshot ID from before the ALTER TABLE and DELETE operations.
-
-```sql
-DESCRIBE HISTORY USERNAME.telco_iceberg_kafka;
-```
-
-![Cloudera Data Warehouse Query 10](cdw_vw_query_10.png)
-
-* Query the historical version of the table: Use the snapshot ID you found above to query the table as it existed at that exact moment. Replace the `SNAPSHOT_ID` variable with the selected ID.
-
-```sql
-SELECT COUNT(*) 
-FROM USERNAME.telco_iceberg_kafka
-FOR SYSTEM_VERSION AS OF ${SNAPSHOT_ID};
-```
-
-![Cloudera Data Warehouse Query 11](cdw_vw_query_11.png)
 
 ### Cloudera Data Vizualization
 
