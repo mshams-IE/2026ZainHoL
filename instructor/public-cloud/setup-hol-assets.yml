@@ -1,0 +1,474 @@
+---
+
+- name: Configure Hands on Lab Assets
+  hosts: localhost
+  connection: local
+  gather_facts: no
+  tags:
+    - env
+  tasks:
+    - name: Print stuff
+      debug:
+        msg:
+          - Attendee count: "{{ num_attendees }}"
+          - Num Impala VWs: "{{ dw.impala_vw.num_vws }}"
+          - VW name: "{{ dw.impala_vw.vw_name_prefix +'-%03x' | format(item + 1) }}"
+      loop: "{{ range(0, dw.impala_vw.num_vws | int) }}"          
+
+############# Environment Discovery & Validation #############
+        
+    - name: Gather details about the CDP environment
+      tags:
+        - always
+      block:
+        # Find details about the environment
+        - name: Set environment name from either pre-existing environment or Terraform outputs
+          ansible.builtin.set_fact:
+            cdp_environment_name: "{{ cdp_env if cdp_env is defined else lookup('cloud.terraform.tf_output', 'cdp_environment_name', project_path=[playbook_dir,'tf-cdp-env'] | path_join) }}"
+
+        - name: Query for the CDP Public Cloud Environment
+          cloudera.cloud.env_info:
+            name: "{{ cdp_environment_name }}"
+          register: __env
+
+        - name: Verify that environment is in running state
+          ansible.builtin.assert:
+            that:
+              - __env.environments | length == 1
+              - __env.environments[0].status == 'AVAILABLE'
+            fail_msg: "Environment '{{ cdp_environment_name }}' not found or not in Available state"
+
+        # Find details about datalake
+        - name: Query for the CDP Public Cloud Datalake
+          cloudera.cloud.datalake_info:
+            environment: "{{ cdp_environment_name }}"
+          register: __dl
+
+        - name: Assert existence of the CDP Public Cloud Datalake
+          ansible.builtin.assert:
+            that:
+              - __dl.datalakes | length == 1
+              - __dl.datalakes[0].status == "RUNNING"
+            fail_msg: "CDP Public Cloud target Datalake either is missing or invalid: {{ cdp_environment_name }}"
+            quiet: yes        
+
+############# Data Upload #############
+
+    - name: Upload Customer Churn data file to data storage
+      tags:
+        - data
+      block:
+        - name: Upload to S3
+          when: infra_type == "aws"
+          amazon.aws.s3_object:
+            bucket: "{{ __dl.datalakes[0].cloudStorageBaseLocation | regex_search('s3a://([^/]+)/', '\\1') | first }}"
+            src: "files/Telco-Customer-Churn.csv"
+            object: "{{ (__dl.datalakes[0].cloudStorageBaseLocation | regex_search('s3a://[^/]+/(.+)', '\\1') | first) + '/Telco-Customer-Churn.csv' }}"
+            mode: put
+
+############# Datahub Configuration - Kafka Topics #############
+
+    - name: SMM DataHub Configuration
+      tags:
+        - dh
+      block:
+        # Find details about datahub
+        - name: Query for the SMM DataHub
+          cloudera.cloud.datahub_cluster_info:
+            environment: "{{ cdp_environment_name }}"
+            name: "{{ cdp_datahub_smm }}"
+          register: __dh
+
+        - name: Assert existence of the SMM DataHub
+          ansible.builtin.assert:
+            that:
+              - __dh.datahubs | length == 1
+              - __dh.datahubs[0].status == "AVAILABLE"
+            fail_msg: "Streams Messaging Manager DataHub either is missing or invalid: {{ cdp_datahub_smm }}"
+            quiet: yes
+
+        # Set datahub endpoints
+        - name: Lookup the CDP Public Cloud SMM Kafka Datahub endpoints
+          ansible.builtin.set_fact:
+            __smm_api: "{{ lookup('cloudera.cloud.datahub_service', 'STREAMS_MESSAGING_MANAGER_SERVER', datahub=cdp_datahub_smm) | select('regex', 'cdp-proxy-api') | first }}"
+            __schreg_api: "{{ lookup('cloudera.cloud.datahub_service', 'SCHEMA_REGISTRY_SERVER', datahub=cdp_datahub_smm) | select('regex', 'cdp-proxy-api') | first }}"
+            __kafka_brokers: "{{ lookup('cloudera.cloud.datahub_service', 'KAFKA_BROKER', datahub=cdp_datahub_smm) | select('regex', '9093') | first }}"
+            __sr_hostname: "{{ lookup('cloudera.cloud.datahub_instance', 'master', datahub=cdp_datahub_smm  ) | first }}"
+
+        - name: Create kafka topics
+          cloudera.runtime.smm_kafka_topic:
+            state: present
+            endpoint: "{{ __smm_api }}"
+            username: "{{ cdp_workload_username }}"
+            password: "{{ cdp_workload_password }}"
+            name: "{{ __topic.name }}"
+            num_partitions: "{{ __topic.num_partitions }}"
+            replication_factor: "{{ __topic.replication_factor }}"
+            configs: "{{ __topic.topic_configs }}"
+          loop: "{{ kafka_topics }}"
+          loop_control:
+            loop_var: __topic
+            label: "{{ __topic.name }}"  
+
+############# CDF Configuration - Flow Imports and Deployment #############
+
+    - name: Data Flow Configuration
+      tags:
+        - cdf
+      block:
+
+        # Find details about CDF service
+        - name: Retrieve details of CDF Deployment
+          cloudera.cloud.df_service_info:
+              name: "{{ cdp_environment_name }}"
+          register: __cdf_info
+
+        - name: Assert existence of the CDF Data Service
+          ansible.builtin.assert:
+            that:
+              - __cdf_info.services | length == 1
+              - __cdf_info.services[0].status.state == "GOOD_HEALTH"
+            fail_msg: "DataFlow Data Service either is missing or invalid: {{ cdp_environment_name }}"
+            quiet: yes
+
+        - name: Import DataFlow custom flow
+          cloudera.cloud.df_customflow:
+            name: "{{ __flow.name }}"
+            file: "{{ __flow.file }}"
+            description: "{{ __flow.description }}"
+            comments: "{{ __flow.comments }}"
+            state: present
+          loop: "{{ df_custom_flows }}"
+          loop_control:
+            loop_var: __flow
+          register: __custom_flow
+
+        - name: Deploy DataFlow S3 to Kafka flow
+          cloudera.cloud.df_deployment:
+            df_crn: "{{ __cdf_info.services[0].crn }}"
+            name: "{{ df_s3_to_kafka_deployment.name }}"
+            flow_name: "{{ df_s3_to_kafka_deployment.flow_name }}"
+            flow_ver: "{{ df_s3_to_kafka_deployment.flow_ver }}"
+            nifi_ver: "{{ df_s3_to_kafka_deployment.nifi_ver | default(omit) }}"
+            size: "{{ df_s3_to_kafka_deployment.size | default(omit) }}"
+            static_node_count: "{{ df_s3_to_kafka_deployment.static_node_count | default(omit) }}"
+            autoscale: "{{ df_s3_to_kafka_deployment.autoscale | default(omit) }}"
+            autoscale_nodes_min: "{{ df_s3_to_kafka_deployment.autoscale_nodes_min | default(omit) }}"
+            autoscale_nodes_max: "{{ df_s3_to_kafka_deployment.autoscale_nodes_max | default(omit) }}"
+            autostart_flow: "{{ df_s3_to_kafka_deployment.autostart_flow | default(omit) }}"
+            parameter_groups: "{{ df_s3_to_kafka_deployment.parameter_groups | default(omit) }}"
+            kpis: "{{ df_s3_to_kafka_deployment.kpis | default(omit) }}"
+            state: present
+            wait: true
+
+############# CDE Configuration - Resource upload #############
+
+    - name: Data Engineering Configuration
+      tags:
+        - cde
+      block:
+
+        # Find details about CDE service
+        - name: Retrieve details of CDE Deployment
+          cloudera.cloud.de_info:
+              name: "{{ de.definitions[0].name }}"
+              environment: "{{ cdp_environment_name }}"
+          register: __cde_info
+
+        - name: Assert existence of the CDE Data Service
+          ansible.builtin.assert:
+            that:
+              - __cde_info.services | length == 1
+              - __cde_info.services[0].status == "ClusterCreationCompleted"
+            fail_msg: "{{ de.definitions[0].name }} Data Engineering Data Service either is missing or in invalid state"
+            quiet: yes
+
+        - name: Retrieve details of CDE VC Deployment
+          cloudera.cloud.de_virtual_cluster_info:
+              cluster_name: "{{ de.definitions[0].name }}"
+              environment: "{{ cdp_environment_name }}"
+              name: "{{ de.definitions[0].vc.name }}"
+          register: __cde_vc_info
+
+        - name: Assert status of the CDE Virtual Cluster
+          ansible.builtin.assert:
+            that:
+              - __cde_vc_info.vcs | length == 1
+              - __cde_vc_info.vcs[0].status == "AppInstalled"
+            fail_msg: "{{ de.definitions[0].vc.name }} Data Engineering Virtual Cluster either is missing or in invalid state"
+            quiet: yes
+
+        - name: Retrieve CDE access token
+          ansible.builtin.expect:
+            command: "curl -u {{ cdp_workload_username }} https://{{ __cde_info.services[0].clusterFqdn }}/gateway/authtkn/knoxtoken/api/v1/token"
+            responses:
+              '(?i)password': "{{ cdp_workload_password }}"
+          register: __token_request
+
+        - name: Extract access token
+          ansible.builtin.set_fact:
+            __cde_access_token: "{{ __token_request.stdout_lines | select('match', '^\\{.*\\}$') | first | from_json | json_query('access_token') }}"
+
+        - name: Check if the folder already exists
+          ansible.builtin.uri:
+            url: "{{ __cde_vc_info.vcs[0].vcApiUrl }}/resources?includeFiles=true"
+            method: GET
+            headers:
+              Authorization: "Bearer {{ __cde_access_token }}"
+              Accept: "*/*"
+              Content-Type: "application/json"
+          register: __cde_folder_check
+
+        - name: Create folder for CDE resources
+          when:
+           - "{{ 'Telco_Churn' not in __cde_folder_check.json.resources | map(attribute='name') }}"
+          ansible.builtin.uri:
+            url: "{{ __cde_vc_info.vcs[0].vcApiUrl }}/resources"
+            method: POST
+            headers:
+              Authorization: "Bearer {{ __cde_access_token }}"
+              Accept: "*/*"
+              Content-Type: "application/json"
+            body_format: json
+            body:
+              name: "Telco_Churn"
+              type: "files"
+            status_code: 201
+
+        - name: Process parameters.conf template
+          when:
+           - "{{ 'parameters.conf' not in __cde_folder_check.json.resources | community.general.json_query('[?name==`Telco_Churn`].files[].path') }}"
+          block:
+            - name: Create parameters.conf file
+              ansible.builtin.template:
+                src: files/cde/parameters.conf.j2
+                dest: files/cde/parameters.conf
+              register: __cde_parameters_conf
+              vars:
+                CDP_STORAGE_BUCKET: "{{ __dl.datalakes[0].cloudStorageBaseLocation }}"
+        
+        - name: Ensure files are uploaded to CDE VC resources (curl)
+          when:
+           - "{{ item not in __cde_folder_check.json.resources | community.general.json_query('[?name==`Telco_Churn`].files[].path') }}"
+          ansible.builtin.command: >
+            curl -X PUT \
+            -H "Authorization: Bearer {{ __cde_access_token }}" \
+            -H "Accept: */*" \
+            -H "Content-Type: multipart/form-data" \
+            -F "file=@files/cde/{{ item }}" \
+            "{{ __cde_vc_info.vcs[0].vcApiUrl }}/resources/Telco_Churn/{{ item }}"
+          loop:
+            - parameters.conf
+            - CDE-updateTable.py
+            - CDE-telco_data_enrichment.py
+
+        - name: Retrieve details of CDE jobs
+          ansible.builtin.uri:
+            url: "{{ __cde_vc_info.vcs[0].vcApiUrl }}/jobs"
+            method: GET
+            headers:
+              Authorization: "Bearer {{ __cde_access_token }}"
+              Accept: "*/*"
+              Content-Type: "application/json"
+          register: __cde_job_check
+
+        - name: Create Spark CDE jobs
+          when:
+            - "{{ (item | regex_replace('.py', '')) not in __cde_job_check.json.jobs | map(attribute='name') }}"     
+          ansible.builtin.uri:
+            url: "{{ __cde_vc_info.vcs[0].vcApiUrl }}/jobs"
+            method: POST
+            headers:
+              Authorization: "Bearer {{ __cde_access_token }}"
+              Accept: "*/*"
+              Content-Type: "application/json"
+            body_format: json
+            body:
+              name: "{{ item | regex_replace('.py', '') }}"
+              type: "spark"
+              mounts:
+                  - resourceName : "Telco_Churn"
+              spark:
+                file: "{{ item }}"
+            status_code: 
+              - 200
+              - 201
+          loop:
+            - CDE-updateTable.py
+            - CDE-telco_data_enrichment.py
+
+############# CDW Configuration - Database Creation #############
+
+    - name: Data Warehouse Configuration
+      tags:
+        - cdw
+        - dataviz
+      block:
+
+        # Find details about CDW service        
+        - name: Retrieve details for CDW Deployment
+          cloudera.cloud.dw_cluster_info:
+            env: "{{ cdp_environment_name }}"
+          register: __cdw_ds
+
+        - name: Check status of CDW Data Service
+          ansible.builtin.assert:
+            that:
+              - __cdw_ds.clusters | length == 1
+              - __cdw_ds.clusters | map(attribute='status') | first == 'Running'
+            fail_msg: "CDW Data Service not enabled for Environment, {{ cdp_environment_name }}"
+            quiet: yes
+
+        - name: Get Hive Virtual Warehouse details
+          cloudera.cloud.dw_virtual_warehouse_info:
+            cluster_id: "{{ __cdw_ds.clusters | map(attribute='id') | first }}"
+            name: "{{ dw.hive_vw.vw_name_prefix }}-001"
+          register: __cdw_hive_vw
+
+        - name: Add DL Gateway node to dynamic inventory
+          ansible.builtin.add_host:
+            name: dl_gateway
+            ansible_host: "{{ query('cloudera.cloud.datalake_instance', 'master', environment=cdp_environment_name, detailed=True) | flatten | map(attribute='discoveryFQDN') | first  }}"
+            ansible_user: "{{ cdp_workload_username }}"
+            ansible_ssh_pass: "{{ cdp_workload_password }}"
+            hive_jdbc_url: "{{ __cdw_hive_vw.virtual_warehouses  | map(attribute='endpoints')  | map(attribute='hiveJdbc') | first }}"
+          no_log: true
+
+      # NOTE: CDW queries are executed in next play on DL Gateway host
+
+############# CDW DataViz Configuration - Connections #############
+
+    - name: DataViz Configuration
+      tags:
+        - dataviz
+      block:
+
+        # Find details about CDW service        
+        - name: Retrieve details for CDW Deployment
+          cloudera.cloud.dw_cluster_info:
+            env: "{{ cdp_environment_name }}"
+          register: __cdw_ds
+
+        - name: Check status of CDW Data Service
+          ansible.builtin.assert:
+            that:
+              - __cdw_ds.clusters | length == 1
+              - __cdw_ds.clusters | map(attribute='status') | first == 'Running'
+            fail_msg: "CDW Data Service not enabled for Environment, {{ cdp_environment_name }}"
+            quiet: yes
+
+        - name: Get Impala Virtual Warehosue details
+          cloudera.cloud.dw_virtual_warehouse_info:
+            cluster_id: "{{ __cdw_ds.clusters | map(attribute='id') | first }}"
+            name: "{{ dw.impala_vw.vw_name_prefix +'-%03x' | format(item + 1) }}"
+          loop: "{{ range(0, dw.impala_vw.num_vws | int) }}"
+          register: __cdw_impala_vw
+
+        - name: Get Data Vizualisation details
+          cloudera.cloud.dw_data_visualization_info:
+            cluster_id: "{{ __cdw_ds.clusters | map(attribute='id') | first }}"
+            name: "{{ dw.viz.viz_name_prefix +'-%03x' | format(item + 1) }}"
+          loop: "{{ range(0, dw.viz.num_viz | int) }}"
+          register: __cdw_viz
+
+        - name: Define Connection values to dataviz API
+          ansible.builtin.set_fact:
+            dataviz_url_prefix: "https://viz-"
+            dataviz_url_suffix: ".dw-{{ cdp_environment_name }}.{{ tenant_id }}.cloudera.site"
+            host_url: coordinator.impala-1747652475-wl62.svc.cluster.local
+          vars:
+            tenant_id: "{{ __env.environments[0].freeipa.domain.split('.')[1]}}"
+
+        - name: Create Data Viz Api Key
+          ansible.builtin.uri:
+            url: "{{ dataviz_url_prefix }}{{ dw.viz.viz_name_prefix + '-%03x' | format(item + 1) }}{{ dataviz_url_suffix }}/arc/apps/demoapikeys"
+            method: POST
+            headers:
+              Content-Type: "application/x-www-form-urlencoded"
+            body_format: form-urlencoded
+            body:
+              username: "{{ viz_default_username }}"
+              password: "{{ viz_default_password }}"
+              apikey: ""
+              active: "true"
+              expires: "never"
+            status_code: 200
+            return_content: yes
+          loop: "{{ range(0, dw.viz.num_viz | int) }}"
+          register: __viz_api_key_response
+
+        - name: Create Data Viz Connection to corresponding Impala VW (curl)
+          ansible.builtin.command: >
+            curl -X POST
+            -H "Content-Type: application/x-www-form-urlencoded"
+            -H "Authorization: apikey {{ __viz_api_key_response.results | selectattr('url', 'search', dw.viz.viz_name_prefix +'-%03x' | format(item + 1)) | map(attribute='json.secret_apikey') | first }}"
+            "{{ dataviz_url_prefix }}{{ dw.viz.viz_name_prefix + '-%03x' | format(item + 1) }}{{ dataviz_url_suffix }}/arc/adminapi/v1/connections"
+            --data-urlencode 'data=[{
+              "name": "{{ 'viz-impala-cxn' + '-%03x' | format(item + 1) }}",
+              "type": "impyla",
+              "info": {
+                "PARAMS": {
+                  "CONNECTIONNAME_EXTENDED": "cdw-impyla",
+                  "CONCURRENCY": 100,
+                  "CONCURRENCY_USER": 5,
+                  "QUERY_TIMEOUT": 10,
+                  "QUERY_LOADING_WARNING_SECONDS": 20,
+                  "UPLOAD_MAXROWS": 1000000,
+                  "APP_NAME": "viz",
+                  "ACCOUNT": "",
+                  "HOST": "{{ 'coordinator.' + (__cdw_impala_vw.results | map(attribute='virtual_warehouses') | flatten | selectattr('name', '==', dw.impala_vw.vw_name_prefix + '-%03x' | format(item + 1)) | map(attribute='id') | first) + '.svc.cluster.local' }}",
+                  "PORT": "28000",
+                  "USERNAME": "{{ 'srv_' + (__cdw_ds.clusters | map(attribute='id') | first) }}",
+                  "SETTINGS": {},
+                  "SOCKET_TIMEOUT": 600,
+                  "MODE": "http",
+                  "HS2_HTTP_SQLPATH": "cliservice",
+                  "HS2_HTTP_ACCESS_TOKEN": "",
+                  "IMPERSONATION": false,
+                  "IMPERSONATION_TRUSTED": true,
+                  "AUTH": "ldap",
+                  "SOCK": "normal",
+                  "KERBSERV": "",
+                  "SSLCERT_NAME_MISMATCH": false,
+                  "CACHE": {
+                    "ENABLED": 0,
+                    "RETENTION": 0
+                  },
+                  "ARCENGINE_HISTORY_ETL": {
+                    "ENABLED": 0,
+                    "TARGET_TABLE": "",
+                    "JOB_NAME": "",
+                    "SCHEDULE": "Weekly"
+                  }
+                }
+              }
+            }]'
+          loop: "{{ range(0, dw.viz.num_viz | int) }}"
+
+############# CDW Configuration contd. - Database Creation #############
+
+- name: Execute Hive queries on Data Lake Host
+  hosts: dl_gateway
+  gather_facts: no
+  tags:
+    - cdw
+  tasks:
+
+    - name: Create temp directory for sql files
+      ansible.builtin.tempfile:
+        prefix: "{{ prefix }}_sql_scripts"
+        state: directory
+      register: __sql_scripts_temp_dir
+
+    - name: Copy SQL files to remote machine
+      ansible.builtin.template:
+        src: "files/cdw/{{ item }}"
+        dest: "{{ __sql_scripts_temp_dir.path }}/{{ item | regex_replace('.j2', '') }}"
+      loop:
+        - ddl_master_tables_create.sql
+
+    - name: Run the SQL queries using beeline
+      ansible.builtin.command: 
+        cmd: "beeline -u {{ hive_jdbc_url }} -n {{ cdp_workload_username }} -p {{ cdp_workload_password }} -f {{ __sql_scripts_temp_dir.path }}/{{ item }}"
+      loop:
+        - ddl_master_tables_create.sql

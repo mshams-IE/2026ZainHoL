@@ -1,0 +1,253 @@
+---
+# **** EDIT PLACEHOLDERS IN THE SECTION AS REQUIRED ***
+# Short prefix to append to all resources created
+prefix: "<ENTER_VALUE>"                     # str; keep short 4-7 characters
+owner_email: "<ENTER_VALUE>"           # email address of owner e.g. user@cloudera.com
+
+# Your CDP workload credentials
+cdp_workload_username: "<ENTER_VALUE>"         # str;
+cdp_workload_password: "<ENTER_VALUE>"         # str; 
+
+# AWS region for the CDP Public Cloud and Peer networking
+region:  "<ENTER_VALUE>"                       # str; e.g. (us-east-2)
+
+# Number of Hands on Lab Attendees
+# Used to determine the scaling in the Data Service configuation
+num_attendees: <ENTER_VALUE>
+
+# Optionally specify a pre-existing Keycloak group
+# keycloak_group_name: "<ENTER_VALUE>"
+
+# Cloudera on cloud Environment Deployment
+# NOTE: Uncomment and set below to use existing CDP Public Cloud Environment
+# cdp_env:   "<ENTER_VALUE>" # str; e.g. "cldr1-cdp-env"
+
+# **** END OF SECTION REQUIRING EDITS ***
+
+deployment_template: public  
+datalake_scale: "LIGHT_DUTY"
+
+cdp_control_plane_region: 'us-west-1' # Used for role & resource role permissions. Change if using different control plane
+
+# CDP Public Cloud Data Hubs 
+# (update if you want to target different or existing clusters)
+cdp_datahub_smm:  "{{ prefix }}-smm-dh"
+
+# Data Services to enable
+enable_cdf: yes
+enable_cml: yes
+enable_cdw: yes
+enable_cde: yes
+
+# CDP Groups and roles
+cdp_instructor_group: 
+  name: "{{ prefix }}-instructor"
+  create_group: yes # For Terraform
+  add_to_idbroker: yes
+  sync_on_login: no
+  roles:
+    - PowerUser
+  resource_roles:
+    - EnvironmentAdmin
+    - DEAdmin
+    - DFAdmin
+    - DFFlowAdmin
+    - DFFlowDeveloper
+    - DWAdmin
+    - MLAdmin
+    - ODAdmin
+    - EnvironmentUser
+    - DEUser
+    - DWUser
+    - MLUser
+    - ODUser
+    - Owner
+
+cdp_attendee_group:
+  name: "{{ keycloak_group_name | default(prefix ~ '-attendee') }}" # NOTE: This can be a pre-existing group aligning with the Keycloak realm
+  create_group: "{{ 'false' if keycloak_group_name is defined else 'true' }}" # For Terraform
+  add_to_idbroker: yes
+  sync_on_login: no
+  roles:
+    - DFCatalogAdmin
+    - DFCatalogViewer
+    - EnvironmentUser
+  resource_roles:
+    - DataSteward
+    - DEUser
+    - DFFlowAdmin
+    - DFFlowDeveloper
+    - DFFlowUser
+    - DWUser
+    - EnvironmentUser
+    - MLBusinessUser
+    - MLUser
+    - MLViewer
+    - Owner
+
+infra_type: "aws"
+
+# Tagging
+tags:
+  owner: "{{ owner_email }}"
+  project: "{{ prefix }} - Data Lifecycle HoL"
+  deploy-tool: Foundry
+
+# Network connectivity
+ingress_extra_cidrs_and_ports:
+  cidrs: "{{ lookup('cloudera.infra.global_vpn', descriptions=True) | selectattr('description', 'search', 'Prisma') | map(attribute='cidr') | list }}"
+  ports: [22, 443]      # Cloud-only access
+
+###########################
+# SMM DataHub Configurations
+###########################
+
+# Kafka topic to create
+kafka_topics:
+  - name: "telco_data"
+    num_partitions: 10
+    replication_factor: 3
+    topic_configs:
+      cleanup.policy: delete
+
+###########################
+# Data Flow Configurations
+###########################
+df:
+  nodes_min: 3
+  nodes_max: "{{ num_attendees }}"
+  public_loadbalancer: yes
+  loadbalancer_ip_ranges: "{{ ingress_extra_cidrs_and_ports.cidrs }}"
+  k8s_ip_ranges: "{{ ingress_extra_cidrs_and_ports.cidrs }}"
+
+# CDF custom flow
+df_custom_flows:
+  - name: "{{ prefix }}-s3-to-kafka"
+    file: files/cdf/s3_to_kafka.json
+    description: "Load data from s3 file to telco_data Kafka topic"
+    comments: "Initial Version"
+  - name: "{{ prefix }}-kafka-to-lakehouse"
+    file: files/cdf/kafka-to-lakehouse-with-table-creation.json
+    description: "Load data from Kafka into Lakehouse tables"
+    comments: "Initial Version"
+
+df_s3_to_kafka_deployment:
+  name: "{{ prefix }}-s3-to-kafka"
+  flow_name: "{{ prefix }}-s3-to-kafka"
+  flow_ver: 1
+  size: EXTRA_SMALL
+  autoscale: true
+  autoscale_nodes_min: 1
+  autoscale_nodes_max: 3
+  autostart_flow: true
+  parameter_groups:
+    - name: "parameters"
+      parameters:
+        - name: "CDP Workload User"
+          assetReferences: []
+          value: "{{ cdp_workload_username }}"
+        - name: "CDP Workload Password"
+          assetReferences: []
+          value: "{{ cdp_workload_password }}"
+        - name: "Source S3 Bucket"
+          assetReferences: []
+          value: "{{ __dl.datalakes[0].cloudStorageBaseLocation | regex_search('s3a://([^/]+)/', '\\1') | first }}" # Determined from lookup in setup-hol-assets.yml
+        - name: "Topic Name"
+          assetReferences: []
+          value: "{{ kafka_topics[0].name }}" # From the kafka_topics section in this file
+        - name: "kafkabrokers"
+          assetReferences: []
+          value: "{{ __kafka_brokers | default(omit) }}" # Determined from lookup in setup-hol-assets.yml (omit used to avoid error during teardown-hol-assets.yml)
+        - name: "CDPEnvironment"
+          assetReferences: []
+          value: "/home/nifi/additional/secret/env_config/core-site.xml,/home/nifi/additional/secret/env_config/ssl-client.xml,/home/nifi/additional/secret/env_config/hive-site.xml" # Determined from lookup in setup-hol-assets.yml
+
+###########################
+# Machine Learning Workspace
+###########################
+# Define the instance types used in ML workspace & CDE service
+instance_types:
+  cml_default:
+    aws: m5.12xlarge
+    azure: Standard_DS5_v2
+  cml_gpu:
+    aws: p3.8xlarge
+    azure: Standard_NC6s_v2
+  cde_default:
+    aws: 
+      name: m7g.4xlarge
+      cpu: 16
+      mem: 64
+    azure: 
+      name: Standard_D16s_v4
+
+# ML workspace definition
+ml:
+  definitions:
+    - name: "{{ prefix }}-default-ml"
+      tls: yes
+      governance: yes
+      metrics: yes
+      monitoring: yes
+      private_cluster: no
+      public_loadbalancer: yes
+      instance_groups:
+        - name: cpu_settings
+          instanceCount: 5
+          instanceType: "{{ instance_types.cml_default[infra_type | lower] | default(omit) }}"
+          instanceTier: "ON_DEMAND"
+          autoscaling:
+            minInstances: 5
+            maxInstances: "{{ num_attendees }}"
+            enabled: yes
+          rootVolume:
+            size: 300
+
+########################
+# Data Warehouse Service
+########################
+
+dw:
+  private_loadbalancer: no
+  public_worker_node: yes
+  overlay: yes
+  impala_vw:
+    vw_name_prefix: "{{ prefix }}-impala"
+    num_vws: "{{ (num_attendees / 10) | round | int }}"
+    tshirt_size: small
+  hive_vw:
+    vw_name_prefix: "{{ prefix }}-hive"
+    num_vws: 1
+    tshirt_size: small
+  viz:
+    viz_name_prefix: "{{ prefix }}-viz"
+    num_viz: "{{ (num_attendees / 10) | round | int }}"
+    resource_template: viz-default
+
+viz_default_username: "vizapps_admin"
+viz_default_password: "vizapps_admin"
+
+# viz_api_key:
+#   je-churn-dl-viz-001: 0iOhFl97F0yIN4GK0dpOiCZIhTAPtRoY5LQdPFP9PcRuvHCa
+#   je-churn-dl-viz-002: IpDuZQGVBEJgYkaG007nYIBnq3Uwx1ubuEO1iBhopf3LQYrK
+
+###########################
+# Data Engineering Service
+###########################
+
+de:
+  definitions:
+    - name: "{{ prefix }}-default-de"
+      instanceType: "{{ instance_types.cde_default[infra_type | lower].name | default(omit) }}"
+      private_cluster: no
+      public_loadbalancer: yes
+      workload_analytics: yes
+      k8s_ip_ranges: "{{ ingress_extra_cidrs_and_ports.cidrs }}"
+      loadbalancer_ip_ranges: "{{ ingress_extra_cidrs_and_ports.cidrs }}"
+      minimum_instances: 1
+      maximum_instances: "{{ num_attendees }}"
+      vc:
+        name: "{{ prefix }}-vc"
+        spark_version: SPARK3_5_4
+        cpu_requests: "{{ (instance_types.cde_default[infra_type | lower].cpu * num_attendees * 0.5) | int }}"
+        memory_requests: "{{ (instance_types.cde_default[infra_type | lower].mem * num_attendees * 0.5) | int }}Gi"

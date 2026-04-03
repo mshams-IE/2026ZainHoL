@@ -1,0 +1,1 @@
+DROP DATABASE IF EXISTS master_data CASCADE;

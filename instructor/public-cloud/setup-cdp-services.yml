@@ -1,0 +1,419 @@
+---
+
+- name: Set up CDP Public Cloud DataHubs and Data Services
+  hosts: localhost
+  connection: local
+  gather_facts: no
+  tags:
+    - env
+  tasks:
+
+############# Environment Discovery & Validation #############
+        
+    - name: Gather details about the CDP environment
+      tags:
+        - always
+      block:
+        - name: Set environment name from either pre-existing environment or Terraform outputs
+          ansible.builtin.set_fact:
+            cdp_environment_name: "{{ cdp_env if cdp_env is defined else lookup('cloud.terraform.tf_output', 'cdp_environment_name', project_path=[playbook_dir,'tf-cdp-env'] | path_join) }}"
+
+        - name: Query for the CDP Public Cloud Environment
+          cloudera.cloud.env_info:
+            name: "{{ cdp_environment_name }}"
+          register: __env
+
+        - name: Extract details about the environment
+          ansible.builtin.set_fact:
+            __env_details: "{{ env_details }}"
+          vars:
+            network_details: "{{ (__env.environments |  selectattr('environmentName', 'contains', cdp_environment_name)|first).network | default([]) }}"
+            cloud_platform: "{{ (__env.environments |  selectattr('environmentName', 'contains', cdp_environment_name)|first).cloudPlatform }}"
+            env_details: 
+              env_name: "{{ (__env.environments |  selectattr('environmentName', 'contains', cdp_environment_name)|first).environmentName }}"
+              crn: "{{ (__env.environments |  selectattr('environmentName', 'contains', cdp_environment_name)|first).crn }}"
+              status: "{{ (__env.environments |  selectattr('environmentName', 'contains', cdp_environment_name)|first).status }}"
+              cloud_platform: "{{ cloud_platform }}"
+              region: "{{ (__env.environments |  selectattr('environmentName', 'contains', cdp_environment_name)|first).region }}"
+              credential_name: "{{ (__env.environments |  selectattr('environmentName', 'contains', cdp_environment_name)|first).credentialName| default(omit)}}"
+              # network id key is cloud platform dependent
+              network_id: "{{ network_details[cloud_platform | lower] | default(None) | community.general.json_query('networkId||vpcId||networkName') or omit }}"
+              subnets: "{{ network_details | community.general.json_query('subnetIds') or omit }}"
+
+############# Datahub - Start #############
+
+    - name: Create required Datahubs
+      tags:
+        - dh
+      block:
+        - name: Cache the Datahub templates and definitions available for the CDP Public Cloud Environment
+          ansible.builtin.set_fact:
+            dh_templates: "{{ lookup('cloudera.cloud.datahub_template', cdp_environment_name) }}"
+            dh_definitions: "{{ lookup('cloudera.cloud.datahub_definition', cdp_environment_name) }}"
+
+        - name: Start setup of datahub
+          cloudera.cloud.datahub_cluster:
+            name: "{{ __datahub.name }}"
+            env: "{{ cdp_environment_name }}"
+            template: "{{ dh_templates | select('regex', __datahub.template) | flatten | first }}"
+            definition: "{{ dh_definitions | select('regex', __datahub.definition) | flatten | first }}"
+            multi_az: no
+            state: present
+            wait: yes
+          loop:
+            - template: "Streams Messaging Light Duty"
+              definition: "Streams Messaging Light Duty"
+              name: "{{ cdp_datahub_smm }}"
+          loop_control:
+            loop_var: __datahub
+            label: "{{ __datahub.name }}"
+          async: 3600
+          poll: 0
+          register: __async
+
+# ############# Enable Data Services as required #############
+
+# ** CDF - Start
+
+    - name: Start enable of up CDF service
+      when: 
+        - enable_cdf
+        - df is defined
+      cloudera.cloud.df_service:
+        state: present
+        env_crn: "{{ __env_details.crn }}"
+        nodes_min: "{{ df.nodes_min | default(omit) }}"
+        nodes_max: "{{ df.nodes_max | default(omit) }}"
+        public_loadbalancer: "{{ df.public_loadbalancer | default(omit) }}"
+        cluster_subnets_filter: "{{ df.cluster_subnets_filter | default(omit) }}"
+        cluster_subnets: "{{ __env_details.subnets if  df.cluster_subnets_filter is not defined else omit  }}"
+        k8s_ip_ranges: "{{ df.k8s_ip_ranges | default(omit) }}"
+        loadbalancer_subnets_filter: "{{ df.loadbalancer_subnets_filter | default(omit) }}"
+        loadbalancer_subnets: "{{ __env_details.subnets if  ((df.loadbalancer_subnets_filter is not defined) and (__env_details.cloud_platform != 'AZURE')) else omit  }}"
+        loadbalancer_ip_ranges: "{{ df.loadbalancer_ip_ranges | default(omit) }}"
+        wait: true
+      async: 3600 # 1 hour timeout
+      poll: 0
+      register: __cdf_async
+      tags:
+        - cdf
+
+# ** CML - Start
+
+    - name: Start enable of up CML workspaces
+      when: 
+        - enable_cml
+        - ml is defined
+        - ml.definitions | length > 0
+      cloudera.cloud.ml:
+        state: present
+        name: "{{ __cml_item.name }}"
+        env: "{{ __env_details.env_name }}"
+        governance: "{{ __cml_item.governance }}"
+        metrics: "{{ __cml_item.metrics }}"
+        monitoring: "{{ __cml_item.monitoring }}"
+        private_cluster: "{{ __cml_item.private_cluster | default(omit) }}"
+        nfs:  "{{ azure_nfs_file_share_url if __env_details.cloud_platform == 'AZURE' else omit  }}"
+        nfs_version: "{{ '4.1' if __env_details.cloud_platform == 'AZURE' else omit  }}"
+        public_loadbalancer: "{{ __cml_item.public_loadbalancer | default(omit) }}"
+        k8s_request:
+          environmentName: "{{ __env_details.env_name }}"
+          instanceGroups: "{{ __cml_item.instance_groups }}"
+        debug: true
+      loop_control:
+        loop_var: __cml_item
+        label: "{{ __cml_item.name }}"
+      loop: "{{ ml.definitions }}"
+      async: 3600 # 1 hour timeout
+      poll: 0
+      register: __cml_async
+      tags:
+        - cml
+
+# ** CDW - Start
+
+    - name: Start setup of CDW service - Azure
+      when: 
+        - dw is defined
+        - __env_details.cloud_platform | lower == 'azure'
+      cloudera.cloud.dw_cluster:
+        env_crn: "{{ __env_details.crn }}"
+        azure:
+          subnet: "{{ __env_details.subnets[0] }}"
+          enable_az: False
+          managed_identity: "{{ azure_aks_credential_managed_identity_id | default(omit) }}"
+        private_load_balancer: "{{ dw.private_loadbalancer | default(omit) }}"
+        public_worker_node: "{{ dw.public_worker_node | default(omit) }}"
+        overlay: "{{ dw.overlay | default(omit) }}"
+        state: present
+        wait: yes
+      async: 3600 # 1 hour timeout
+      poll: 0
+      register: __cdw_azure_async
+      tags:
+        - cdw
+
+    - name: Start setup of CDW service - AWS
+      when:
+        - enable_cdw
+        - dw is defined
+        # - __env_details.cloud_platform | lower == 'aws'
+      cloudera.cloud.dw_cluster:
+        env_crn: "{{ __env_details.crn }}"
+        aws_lb_subnets: "{{ __env_details.subnets }}"
+        aws_worker_subnets: "{{ __env_details.subnets }}"
+        private_load_balancer: "{{ dw.private_loadbalancer | default(omit) }}"
+        public_worker_node: "{{ dw.public_worker_node | default(omit) }}"
+        overlay: "{{ dw.overlay | default(omit) }}"
+        state: present
+        wait: true
+      async: 3600 # 1 hour timeout
+      poll: 0        
+      register: __cdw_aws_async
+      tags:
+        - cdw
+
+# ** CDE - Start
+
+    - name: Start setup of CDE service
+      when:
+        - enable_cde
+        - de is defined
+      cloudera.cloud.de:
+        state: present
+        env: "{{ __env_details.env_name }}"
+        name: "{{ __cde_item.name }}"
+        instance_type: "{{ __cde_item.instanceType }}"
+        enable_private_network: "{{ __cde_item.private_cluster }}"
+        enable_public_endpoint: "{{ __cde_item.public_loadbalancer }}" 
+        enable_workload_analytics: "{{ __cde_item.workload_analytics }}"
+        whitelist_ips: "{{ __cde_item.k8s_ip_ranges }}"
+        loadbalancer_ips: "{{ __cde_item.loadbalancer_ip_ranges }}"
+        minimum_instances: "{{ __cde_item.minimum_instances }}"
+        maximum_instances: "{{ __cde_item.maximum_instances }}"
+        timeout: 7200
+        wait: yes
+      loop_control:
+        loop_var: __cde_item
+        label: "{{ __cde_item.name }}"
+      loop: "{{ de.definitions }}"
+      async: 3600 # 1 hour timeout
+      poll: 0
+      register: __cde_async
+      tags:
+        - cde
+
+############# Datahub - Monitor setup #############
+
+    - name: Monitor the set up of the Datahubs
+      when:
+        - __async is defined
+        - __async.results is defined
+        - __async.results | length > 0
+      ansible.builtin.async_status:
+        jid: "{{ __setup.ansible_job_id }}"
+      loop_control:
+        loop_var: __setup
+        label: "{{ __setup.__datahub.name | default('Unknown') }}"
+      loop: "{{ __async.results }}"
+      register: __setups_async
+      until: __setups_async.finished
+      retries: 120
+      delay: 30
+      tags:
+        - dh
+
+############# Wait for Data Services setup to complete #############
+
+# ** CDF - Wait
+    - name: Monitor the setup of CDF Service
+      when:
+        - enable_cdf
+        - __cdf_async is defined
+      ansible.builtin.async_status:
+        jid: "{{ __cdf_async.ansible_job_id }}"
+      register: __setups_async
+      until: __setups_async.finished
+      retries: 120
+      delay: 30
+      tags:
+        - cdf
+
+# ** CML - Wait
+    - name: Monitor the set up of the CML
+      when:
+        - enable_cml
+        - __cml_async is defined
+        - __cml_async.results is defined
+        - __cml_async.results | length > 0
+      ansible.builtin.async_status:
+        jid: "{{ __setup.ansible_job_id }}"
+      loop_control:
+        loop_var: __setup
+        label: "{{ __setup.__cml_item.name | default('Unknown') }}"
+      loop: "{{ __cml_async.results }}"
+      register: __setups_async
+      until: __setups_async.finished
+      retries: 120
+      delay: 30
+      tags:
+        - cml
+
+# ** CDW - Wait
+    - name: Monitor the setup of CDW Service - Azure
+      when:
+        - enable_cdw
+        - __cdw_azure_async is defined
+        - __env_details.cloud_platform | lower == 'azure'
+      ansible.builtin.async_status:
+        jid: "{{ __cdw_azure_async.ansible_job_id }}"
+      register: __setups_async
+      until: __setups_async.finished
+      retries: 120
+      delay: 30
+      tags:
+        - cdw
+
+    - name: Monitor the setup of CDW Service - AWS
+      when:
+        - enable_cdw
+        - __cdw_aws_async is defined
+        - __env_details.cloud_platform | lower == 'aws'
+      ansible.builtin.async_status:
+        jid: "{{ __cdw_aws_async.ansible_job_id }}"
+      register: __setups_async
+      until: __setups_async.finished
+      retries: 120
+      delay: 30
+      tags:
+        - cdw
+
+# ** CDE - Wait
+    - name: Monitor the set up of the CDE
+      when:
+        - enable_cde
+        - __cde_async is defined
+        - __cde_async.results is defined
+        - __cde_async.results | length > 0
+      ansible.builtin.async_status:
+        jid: "{{ __setup.ansible_job_id }}"
+      loop_control:
+        loop_var: __setup
+        label: "{{ __setup.__cde_item.name | default('Unknown') }}"
+      loop: "{{ __cde_async.results }}"
+      register: __setups_async
+      until: __setups_async.finished
+      retries: 120
+      delay: 30
+      tags:
+        - cde
+
+############# Configure service resources for CDW and CDE #############
+
+    - name: Configure CDW service resources
+      # when:
+      #   - enable_cdw
+      tags:
+        - cdw        
+      block:
+        - name: Gather details for CDW Data Service
+          cloudera.cloud.dw_cluster_info:
+            env: "{{ cdp_environment_name }}"
+          register: __cdw_ds    
+
+        - name: Gather information about the database catalog
+          cloudera.cloud.dw_database_catalog_info:
+            # TODO: Use the name parameter to get default DBC
+            # name: ...
+            cluster_id: "{{ __cdw_ds.clusters | map(attribute='id') | first }}"
+          register: __dw_dbc_info
+          until: 
+            - __dw_dbc_info.database_catalogs | length > 0
+            - __dw_dbc_info.database_catalogs[0].status == 'Running'
+          retries: 10
+          delay: 30
+
+        # - name: Print inputs
+        #   ansible.builtin.debug:
+        #     msg:
+        #       - __dw_dbc_info is "{{ __dw_dbc_info }}"
+        #       - __cdw_ds is "{{ __cdw_ds }}"
+        #       - cluster_id: "{{ __cdw_ds.clusters | map(attribute='id') | first }}"
+        #       - catalog_id: "{{ __dw_dbc_info.database_catalogs | map(attribute='id') | list | first }}"              
+
+        # CDW Impala Virtual Warehouse
+        - name: Set up the Impala Virtual Warehouse for attendees
+          cloudera.cloud.dw_virtual_warehouse:
+            name: "{{ dw.impala_vw.vw_name_prefix +'-%03x' | format(item + 1) }}"
+            cluster_id: "{{ __cdw_ds.clusters | map(attribute='id') | first }}"
+            catalog_id: "{{ __dw_dbc_info.database_catalogs | map(attribute='id') | list | first }}"
+            type: impala
+            tshirt_size: "{{ dw.impala_vw.tshirt_size }}"
+            wait: yes
+            # TODO: Explore the auto_suspend settings below
+            # autoscaling:
+            #   min_nodes: 2
+            #   max_nodes: 6
+            #   auto_suspend_timeout_seconds: 300
+            #   impala_scale_up_delay_seconds: 20
+            #   impala_scale_down_delay_seconds: 20            
+          loop: "{{ range(0, dw.impala_vw.num_vws | int) }}"          
+
+        # CDW Hive Virtual Warehouse
+        - name: Set up the Hive Virtual Warehouse for instructor
+          cloudera.cloud.dw_virtual_warehouse:
+            name: "{{ dw.hive_vw.vw_name_prefix +'-%03x' | format(item + 1) }}"
+            cluster_id: "{{ __cdw_ds.clusters | map(attribute='id') | first }}"
+            catalog_id: "{{ __dw_dbc_info.database_catalogs | map(attribute='id') | list | first }}"
+            type: hive
+            tshirt_size: "{{ dw.hive_vw.tshirt_size }}"
+            wait: yes
+            # TODO: Explore the auto_suspend settings below
+            # autoscaling:
+            #   min_nodes: 2
+            #   max_nodes: 6
+            #   auto_suspend_timeout_seconds: 300
+            #   hive_scale_wait_time_seconds: 300
+          loop: "{{ range(0, dw.hive_vw.num_vws | int) }}"          
+
+        # CDW Data Viz
+        - name: Set up the CDW DataViz Cluster for attendees
+          cloudera.cloud.dw_data_visualization:
+            name: "{{ dw.viz.viz_name_prefix +'-%03x' | format(item + 1) }}"
+            cluster_id: "{{ __cdw_ds.clusters | map(attribute='id') | first }}" 
+            config:
+              adminGroups: ["{{ cdp_instructor_group.name}}"]
+              userGroups: ["{{ cdp_attendee_group.name}}"]
+            resource_template: "{{ dw.viz.resource_template }}"
+          loop: "{{ range(0, dw.viz.num_viz | int) }}"              
+
+# CDE Virtual Cluster
+    - name: Configure CDE service resources
+      # when:
+      #   - enable_cde
+      tags:
+        - cde 
+      block:
+        - name: Gather details for CDE Data Service
+          cloudera.cloud.de_info:
+            environment: "{{ cdp_environment_name }}"
+            name: "{{ de.definitions[0].name }}"
+          register: __cde_ds
+
+        - name: Create CDE Virtual Cluster
+          cloudera.cloud.de_virtual_cluster:
+            name: "{{ __cde_item.vc.name }}"
+            cluster_name: "{{ __cde_item.name }}"
+            env: "{{ cdp_environment_name }}"
+            spark_version: "{{ __cde_item.vc.spark_version | default(omit) }}"
+            cpu_requests: "{{ (__cde_item.vc.cpu_requests | int) | default(omit) }}"
+            memory_requests: "{{ (__cde_item.vc.memory_requests) | default(omit) }}"
+            # TODO: Add support for vc-tier
+            state: present
+            wait: True
+            delay: 30
+            timeout: 2400
+          loop_control:
+            loop_var: __cde_item
+            label: "{{ __cde_item.name }}"
+          loop: "{{ de.definitions }}"

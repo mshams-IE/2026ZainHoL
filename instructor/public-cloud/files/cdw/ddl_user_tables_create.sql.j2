@@ -1,0 +1,17 @@
+{% for user in range(NUMBER_USERS) %}
+-- ** USER{{'%03d' % loop.index}} **
+
+-- CREATE DATABASE
+DROP DATABASE IF EXISTS user{{'%03d' % loop.index}} CASCADE;
+CREATE DATABASE IF NOT EXISTS user{{'%03d' % loop.index}};
+
+-- CREATE telco_iceberg_kafka table
+CREATE EXTERNAL TABLE IF NOT EXISTS user{{'%03d' % loop.index}}.telco_iceberg_kafka( `multiplelines` string, `paperlessbilling` string, `gender` string, `onlinesecurity` string, `internetservice` string, `techsupport` string, `contract` string, `churn` string, `seniorcitizen` string, `deviceprotection` string, `streamingtv` string, `streamingmovies` string, `totalcharges` string, `partner` string, `monthlycharges` string, `customerid` string, `dependents` string, `onlinebackup` string, `phoneservice` string, `tenure` string, `paymentmethod` string) ROW FORMAT SERDE 'org.apache.iceberg.mr.hive.HiveIcebergSerDe' STORED BY 'org.apache.iceberg.mr.hive.HiveIcebergStorageHandler';
+
+-- CREATE telco_data_curated table
+CREATE EXTERNAL TABLE IF NOT EXISTS user{{'%03d' % loop.index}}.telco_data_curated( `multiplelines` string, `paperlessbilling` string, `gender` string, `onlinesecurity` string, `internetservice` string, `techsupport` string, `contract` string, `churn` string, `seniorcitizen` string, `deviceprotection` string, `streamingtv` string, `streamingmovies` string, `totalcharges` float, `partner` string, `monthlycharges` float, `customerid` string, `dependents` string, `onlinebackup` string, `phoneservice` string, `tenure` float, `paymentmethod` string) ROW FORMAT SERDE 'org.apache.iceberg.mr.hive.HiveIcebergSerDe' STORED BY 'org.apache.iceberg.mr.hive.HiveIcebergStorageHandler' STORED AS PARQUET ;
+
+-- ****
+{% endfor %}
+
+

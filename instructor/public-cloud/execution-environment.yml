@@ -1,0 +1,31 @@
+---
+
+version: 3
+
+images:
+  base_image:
+    name: docker-sandbox.infra.cloudera.com/goes/goes-pvc-community-edition-aws:latest
+
+dependencies:
+  system:
+    - sshpass
+  galaxy:
+    collections:
+      - name: https://github.infra.cloudera.com/GOES/goes.keycloak
+        type: git
+        version: main
+      - name: https://github.com/cloudera-labs/cloudera.cloud
+        type: git
+        version: main
+      - name: https://github.infra.cloudera.com/GOES/cloudera.runtime
+        type: git
+        version: devel
+      - name: amazon.aws
+        version: 9.4.0
+      - name: community.crypto
+        version: 2.26.5
+
+additional_build_steps:
+  append_final:
+    - RUN pip install cdpcli-beta --upgrade
+    - RUN pip install git+https://github.com/cloudera-labs/cdpy@devel#egg=cdpy --upgrade

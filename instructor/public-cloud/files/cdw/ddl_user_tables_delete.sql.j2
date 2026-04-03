@@ -1,0 +1,10 @@
+{% for user in range(NUMBER_USERS) %}
+-- ** USER{{'%03d' % loop.index}} **
+
+-- DROP DATABASE
+DROP DATABASE IF EXISTS user{{'%03d' % loop.index}} CASCADE;
+
+-- ****
+{% endfor %}
+
+

@@ -1,0 +1,330 @@
+---
+
+- name: Remove Hands on Lab Assets
+  hosts: localhost
+  connection: local
+  gather_facts: no
+  tags:
+    - env
+  tasks:
+
+############# Environment Discovery & Validation #############
+        
+    - name: Gather details about the CDP environment
+      tags:
+        - always
+      block:
+        # Find details about the environment
+        - name: Set environment name from either pre-existing environment or Terraform outputs
+          ansible.builtin.set_fact:
+            cdp_environment_name: "{{ cdp_env if cdp_env is defined else lookup('cloud.terraform.tf_output', 'cdp_environment_name', project_path=[playbook_dir,'tf-cdp-env'] | path_join) }}"
+
+        - name: Query for the CDP Public Cloud Environment
+          cloudera.cloud.env_info:
+            name: "{{ cdp_environment_name }}"
+          register: __env
+
+        - name: Verify that environment is in running state
+          ansible.builtin.assert:
+            that:
+              - __env.environments | length == 1
+              - __env.environments[0].status == 'AVAILABLE'
+            fail_msg: "Environment '{{ cdp_environment_name }}' not found or not in Available state"
+
+        # Find details about datalake
+        - name: Query for the CDP Public Cloud Datalake
+          cloudera.cloud.datalake_info:
+            environment: "{{ cdp_environment_name }}"
+          register: __dl
+
+        - name: Assert existence of the CDP Public Cloud Datalake
+          ansible.builtin.assert:
+            that:
+              - __dl.datalakes | length == 1
+              - __dl.datalakes[0].status == "RUNNING"
+            fail_msg: "CDP Public Cloud target Datalake either is missing or invalid: {{ cdp_environment_name }}"
+            quiet: yes        
+
+############# CDE Cleanup #############
+
+    - name: Data Engineering Cleanup
+      tags:
+        - cde
+      block:
+
+        # Find details about CDE service
+        - name: Retrieve details of CDE Deployment
+          cloudera.cloud.de_info:
+              name: "{{ de.definitions[0].name }}"
+              environment: "{{ cdp_environment_name }}"
+          register: __cde_info
+
+        - name: Assert existence of the CDE Data Service
+          ansible.builtin.assert:
+            that:
+              - __cde_info.services | length == 1
+              - __cde_info.services[0].status == "ClusterCreationCompleted"
+            fail_msg: "{{ de.definitions[0].name }} Data Engineering Data Service either is missing or in invalid state"
+            quiet: yes
+
+        - name: Retrieve details of CDE VC Deployment
+          cloudera.cloud.de_virtual_cluster_info:
+              cluster_name: "{{ de.definitions[0].name }}"
+              environment: "{{ cdp_environment_name }}"
+              name: "{{ de.definitions[0].vc.name }}"
+          register: __cde_vc_info
+
+        - name: Assert status of the CDE Virtual Cluster
+          ansible.builtin.assert:
+            that:
+              - __cde_vc_info.vcs | length == 1
+              - __cde_vc_info.vcs[0].status == "AppInstalled"
+            fail_msg: "{{ de.definitions[0].vc.name }} Data Engineering Virtual Cluster either is missing or in invalid state"
+            quiet: yes
+
+        - name: Retrieve CDE access token
+          ansible.builtin.expect:
+            command: "curl -u {{ cdp_workload_username }} https://{{ __cde_info.services[0].clusterFqdn }}/gateway/authtkn/knoxtoken/api/v1/token"
+            responses:
+              '(?i)password': "{{ cdp_workload_password }}"
+          register: __token_request
+
+        - name: Extract access token
+          ansible.builtin.set_fact:
+            __cde_access_token: "{{ __token_request.stdout_lines | select('match', '^\\{.*\\}$') | first | from_json | json_query('access_token') }}"
+
+        - name: Retrieve details of CDE jobs
+          ansible.builtin.uri:
+            url: "{{ __cde_vc_info.vcs[0].vcApiUrl }}/jobs"
+            method: GET
+            headers:
+              Authorization: "Bearer {{ __cde_access_token }}"
+              Accept: "*/*"
+              Content-Type: "application/json"
+          register: __cde_job_check
+
+        - name: Delete Spark CDE jobs
+          when:
+            - "{{ (item | regex_replace('.py', '')) in __cde_job_check.json.jobs | map(attribute='name') }}"     
+          ansible.builtin.uri:
+            url: "{{ __cde_vc_info.vcs[0].vcApiUrl }}/jobs/{{ item | regex_replace('.py', '') }}"
+            method: DELETE
+            headers:
+              Authorization: "Bearer {{ __cde_access_token }}"
+              Accept: "application/json"
+            status_code: 204
+          loop:
+            - CDE-updateTable.py
+            - CDE-telco_data_enrichment.py
+
+        - name: Check if the folder already exists
+          ansible.builtin.uri:
+            url: "{{ __cde_vc_info.vcs[0].vcApiUrl }}/resources?includeFiles=true"
+            method: GET
+            headers:
+              Authorization: "Bearer {{ __cde_access_token }}"
+              Accept: "*/*"
+              Content-Type: "application/json"
+          register: __cde_folder_check
+
+        - name: Delete CDE folder resources
+          when:
+           - "{{ 'Telco_Churn' in __cde_folder_check.json.resources | map(attribute='name') }}"
+          ansible.builtin.uri:
+            url: "{{ __cde_vc_info.vcs[0].vcApiUrl }}/resources/Telco_Churn"
+            method: DELETE
+            headers:
+              Authorization: "Bearer {{ __cde_access_token }}"
+              Accept: "*/*"
+            status_code: 204
+
+        # - name: Process parameters.conf template
+        #   when:
+        #    - "{{ 'parameters.conf' not in __cde_folder_check.json.resources | community.general.json_query('[?name==`Telco_Churn`].files[].path') }}"
+        #   block:
+        #     - name: Create parameters.conf file
+        #       ansible.builtin.template:
+        #         src: files/cde/parameters.conf.j2
+        #         dest: files/cde/parameters.conf
+        #       register: __cde_parameters_conf
+        #       vars:
+        #         CDP_STORAGE_BUCKET: "{{ __dl.datalakes[0].cloudStorageBaseLocation }}"
+        
+        # - name: Ensure files are uploaded to CDE VC resources
+        #   when:
+        #    - "{{ item not in __cde_folder_check.json.resources | community.general.json_query('[?name==`Telco_Churn`].files[].path') }}"
+        #   ansible.builtin.uri:
+        #     url: "{{ __cde_vc_info.vcs[0].vcApiUrl }}/resources/Telco_Churn/{{ item }}"
+        #     method: PUT
+        #     headers:
+        #       Authorization: "Bearer {{ __cde_access_token }}"
+        #       Accept: "*/*"
+        #       Content-Type: "multipart/form-data"
+        #     body_format: form-multipart
+        #     body:
+        #       file:
+        #         filename: "files/cde/{{ item }}"
+        #     status_code: 
+        #       - 200
+        #       - 201
+        #   loop:
+        #     - parameters.conf
+        #     - CDE-updateTable.py
+        #     - CDE-telco_data_enrichment.py
+
+############# CDF Cleanup - Flow Imports and Deployment #############
+
+    - name: Data Flow Cleanup
+      tags:
+        - cdf
+      block:
+
+        # Find details about CDF service
+        - name: Retrieve details of CDF Deployment
+          cloudera.cloud.df_service_info:
+              name: "{{ cdp_environment_name }}"
+          register: __cdf_info
+
+        - name: Assert existence of the CDF Data Service
+          ansible.builtin.assert:
+            that:
+              - __cdf_info.services | length == 1
+              - __cdf_info.services[0].status.state == "GOOD_HEALTH"
+            fail_msg: "DataFlow Data Service either is missing or invalid: {{ cdp_environment_name }}"
+            quiet: yes
+
+        - name: Stop and delete DataFlow deployment
+          cloudera.cloud.df_deployment:
+            df_crn: "{{ __cdf_info.services[0].crn }}"
+            name: "{{ df_s3_to_kafka_deployment.name }}"
+            state: absent
+            wait: true
+
+        - name: Remove DataFlow custom flow
+          cloudera.cloud.df_customflow:
+            name: "{{ __flow.name }}"
+            state: absent
+          loop: "{{ df_custom_flows }}"
+          loop_control:
+            loop_var: __flow
+          register: __custom_flow
+
+############# Datahub Cleanup - Kafka Topics #############
+
+    - name: SMM DataHub Cleanup
+      tags:
+        - dh
+      block:
+        # Find details about datahub
+        - name: Query for the SMM DataHub
+          cloudera.cloud.datahub_cluster_info:
+            environment: "{{ cdp_environment_name }}"
+            name: "{{ cdp_datahub_smm }}"
+          register: __dh
+
+        - name: Assert existence of the SMM DataHub
+          ansible.builtin.assert:
+            that:
+              - __dh.datahubs | length == 1
+              - __dh.datahubs[0].status == "AVAILABLE"
+            fail_msg: "Streams Messaging Manager DataHub either is missing or invalid: {{ cdp_datahub_smm }}"
+            quiet: yes
+
+        # Set datahub endpoints
+        - name: Lookup the CDP Public Cloud SMM Kafka Datahub endpoints
+          ansible.builtin.set_fact:
+            __smm_api: "{{ lookup('cloudera.cloud.datahub_service', 'STREAMS_MESSAGING_MANAGER_SERVER', datahub=cdp_datahub_smm) | select('regex', 'cdp-proxy-api') | first }}"
+            __schreg_api: "{{ lookup('cloudera.cloud.datahub_service', 'SCHEMA_REGISTRY_SERVER', datahub=cdp_datahub_smm) | select('regex', 'cdp-proxy-api') | first }}"
+            __kafka_brokers: "{{ lookup('cloudera.cloud.datahub_service', 'KAFKA_BROKER', datahub=cdp_datahub_smm) | select('regex', '9093') | first }}"
+            __sr_hostname: "{{ lookup('cloudera.cloud.datahub_instance', 'master', datahub=cdp_datahub_smm  ) | first }}"
+
+        - name: Remove kafka topic
+          cloudera.runtime.smm_kafka_topic:
+            state: absent
+            endpoint: "{{ __smm_api }}"
+            username: "{{ cdp_workload_username }}"
+            password: "{{ cdp_workload_password }}"
+            name: "{{ __topic.name }}"
+          loop: "{{ kafka_topics }}"
+          loop_control:
+            loop_var: __topic
+            label: "{{ __topic.name }}"  
+
+############# Data Cleanup #############
+
+    - name: Remove Customer Churn data file from data storage
+      tags:
+        - data
+      block:
+        - name: Remove from S3
+          when: infra_type == "aws"
+          amazon.aws.s3_object:
+            bucket: "{{ __dl.datalakes[0].cloudStorageBaseLocation | regex_search('s3a://([^/]+)/', '\\1') | first }}"
+            object: "{{ (__dl.datalakes[0].cloudStorageBaseLocation | regex_search('s3a://[^/]+/(.+)', '\\1') | first) + '/Telco-Customer-Churn.csv' }}"
+            mode: delobj
+
+############# CDW Cleanup #############
+
+    - name: Data Warehouse Cleanup
+      tags:
+        - cdw
+      block:
+
+        # Find details about CDW service        
+        - name: Retrieve details for CDW Deployment
+          cloudera.cloud.dw_cluster_info:
+            env: "{{ cdp_environment_name }}"
+          register: __cdw_ds
+
+        - name: Check status of CDW Data Service
+          ansible.builtin.assert:
+            that:
+              - __cdw_ds.clusters | length == 1
+              - __cdw_ds.clusters | map(attribute='status') | first == 'Running'
+            fail_msg: "CDW Data Service not enabled for Environment, {{ cdp_environment_name }}"
+            quiet: yes
+
+        - name: Get Hive Virtual Warehosue details
+          cloudera.cloud.dw_virtual_warehouse_info:
+            cluster_id: "{{ __cdw_ds.clusters | map(attribute='id') | first }}"
+            name: "{{ dw.hive_vw.vw_name_prefix }}-001"
+          register: __cdw_hive_vw
+
+        - name: Add DL Gateway node to dynamic inventory
+          ansible.builtin.add_host:
+            name: dl_gateway
+            ansible_host: "{{ query('cloudera.cloud.datalake_instance', 'master', environment=cdp_environment_name, detailed=True) | flatten | map(attribute='discoveryFQDN') | first  }}"
+            ansible_user: "{{ cdp_workload_username }}"
+            ansible_ssh_pass: "{{ cdp_workload_password }}"
+            hive_jdbc_url: "{{ __cdw_hive_vw.virtual_warehouses  | map(attribute='endpoints')  | map(attribute='hiveJdbc') | first }}"
+          no_log: true
+
+- name: Execute Hive Cleanup queries on Data Lake Host
+  hosts: dl_gateway
+  gather_facts: no
+  tags:
+    - cdw
+  tasks:
+
+    - name: Create temp directory for sql files
+      ansible.builtin.tempfile:
+        prefix: "{{ prefix }}_sql_scripts"
+        state: directory
+      register: __sql_scripts_temp_dir
+
+    - name: Copy SQL files to remote machine
+      ansible.builtin.template:
+        src: "files/cdw/{{ item }}"
+        dest: "{{ __sql_scripts_temp_dir.path }}/{{ item | regex_replace('.j2', '') }}"
+      loop:
+        - ddl_master_tables_delete.sql
+        - ddl_user_tables_delete.sql.j2
+      vars:
+        NUMBER_USERS: "{{ num_attendees }}"
+
+    - name: Run the SQL queries using beeline
+      ansible.builtin.command: 
+        cmd: "beeline -u {{ hive_jdbc_url }} -n {{ cdp_workload_username }} -p {{ cdp_workload_password }} -f {{ __sql_scripts_temp_dir.path }}/{{ item }}"
+      loop:
+        - ddl_master_tables_delete.sql
+        - ddl_user_tables_delete.sql

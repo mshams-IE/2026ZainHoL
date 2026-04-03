@@ -1,0 +1,23 @@
+name: Publish MKDocs 
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+permissions:
+  contents: write
+jobs:
+  deploy:
+    if: github.repository == 'GOES/hol-004-telco-churn-data-lifecycle'
+    runs-on: goes-runners
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy MkDocs to GitHub Pages
+        uses: goes/github-actions/actions/publish-mkdocs-action@main
+        with:
+          mkdocs_directory: 'instructor/mkdocs/'
+          requirements_file: 'requirements.txt'
+          python_version: 'python3'
+          force_deploy: 'true'

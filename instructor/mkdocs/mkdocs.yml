@@ -1,0 +1,97 @@
+site_name: "Cloudera Data Lifecycle Hands on Lab"
+site_author: GOES
+copyright: 2026 Cloudera, Inc. All rights reserved.<br><a href="https://www.cloudera.com/legal/terms-and-conditions.html" target="_blank">Terms & Conditions | </a>  <a href="https://www.cloudera.com/legal/policies.html" target="_blank"> Privacy Policy and Data Policy</a>
+repo_url: https://github.infra.cloudera.com/GOES/hol-004-telco-churn-data-lifecycle
+repo_name: goes/hol-004-telco-churn-data-lifecycle
+
+theme:
+    name: material
+    logo: assets/images/logo-cloudera-white.svg
+    favicon: assets/images/favicon.ico
+    palette:
+    - scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        name: Switch to light mode
+        icon: material/weather-sunny
+    - scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        name: Switch to dark mode
+        icon: material/weather-night
+    features:
+    - content.code.annotate
+    - content.code.copy
+    # - navigation.expand
+    # - navigation.indexes
+    # - navigation.sections
+    - navigation.footer    
+    - navigation.top
+
+docs_dir: '../../content'
+site_dir: './build'
+# not_in_nav: |
+extra_css:
+  - assets/stylesheets/extra.css
+extra_javascript:
+  - assets/javascripts/username-replacer.js
+use_directory_urls: false
+
+nav:
+    - Home: 'README.md'
+    - Labs:
+        - Lab 1 - Cloudera Data Flow: 'labs/lab1-cdf/README.md'
+        - Lab 2 - Cloudera Data Engineering: 'labs/lab2-cde/README.md'
+        - Lab 3 - Cloudera Data Warehouse: 'labs/lab3-cdw/README.md'
+        - Lab 4 - Cloudera AI: 'labs/lab4-cai/README.md'
+        - Lab 5 - Cloudera Data Vizualization: 'labs/lab5-dataviz/README.md'
+    - Guides:
+        - Cloudera on cloud access: 'guides/cdp-account/README.md'
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.blocks.html
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true  
+  - pymdownx.tasklist:
+      custom_checkbox: true  
+  - sane_lists: {}
+  - toc:
+      toc_depth: 3
+
+plugins:
+  - same-dir # to allow site_dir to be within docs_dir
+  - search
+  - markdownextradata: {}
+  # - with-pdf:
+  #     custom_template_path: templates
+  #     debug_html: false
+  #     output_path: exercise_guide.pdf
+  - glightbox
+  - macros
+
+# Define values for macros here
+extra:
+    generator: false
+    cdp_environment_name: enablement-cdp-env
+    kafka_to_lakehouse_flow_name: churn-hol-kafka-to-lakehouse
+    hive_jdbc_url: jdbc:hive2://hs2-churn-hol-hive-001.dw-enablement-cdp-env.a465-9q4k.cloudera.site/default;transportMode=http;httpPath=cliservice;socketTimeout=60;ssl=true;retries=3;
+    kafka_brokers: churn-hol-smm-dh-corebroker2.enableme.a465-9q4k.cloudera.site:9093, churn-hol-smm-dh-corebroker1.enableme.a465-9q4k.cloudera.site:9093, churn-hol-smm-dh-corebroker0.enableme.a465-9q4k.cloudera.site:9093
+    kafka_topic: telco_data
+    cai_workbench_name: churn-hol-default-ml
+    cde_virtual_cluster_name: churn-hol-vc
