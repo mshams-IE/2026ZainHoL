@@ -1,4 +1,4 @@
-# Lab 3 - Cloudera Data Warehouse
+# Lab 1 - Cloudera Data Warehouse
 
 In this lab you will take a tour of Cloudera Data Warehouse by querying data from the Open Data Lakehouse and building a dashboard to visualize the results.
 
@@ -18,7 +18,7 @@ Ensure the following requirements are met in order to run this exercise:
 - [ ] Name of Data Vizualization Cluster assigned to your user
 
 !!! info
-    The workshop instructor will assign your user to a Data Warehouse and Data Vizualisation cluster.
+    The workshop instructor will assign your user to a Data Warehouse and Data Vizualisation cluster if no specific cluster assigned to you feel free to use the any of the availble ones.
 
 ## Tasks
 
