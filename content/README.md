@@ -2,7 +2,7 @@
 hide:
   - toc
 ---
-# Cloudera Machine Learning Hands on Lab
+# Cloudera AI Hands on Lab
 
 
 Welcome to this  Hands on Lab, where you'll explore the full data lifecycle through a real-world use case: predicting customer churn for a telecommunications company. This lab provides practical experience using _Cloudera on cloud_ data services, guiding you through key stages from data ingestion and processing to analysis and actionable insights.
@@ -36,7 +36,7 @@ Welcome to this  Hands on Lab, where you'll explore the full data lifecycle thro
 <div class="grid cards"  markdown>
 
 
-- :simple-cloudera:{ .lg .middle } &nbsp; **Lab 3. Cloudera Data Warehouse**
+- :simple-cloudera:{ .lg .middle } &nbsp; **Lab 1. Cloudera Data Warehouse**
 
     ***
 
@@ -50,7 +50,7 @@ Welcome to this  Hands on Lab, where you'll explore the full data lifecycle thro
 
     [:octicons-arrow-right-24: Go to Cloudera Data Warehouse Lab Guide](labs/lab3-cdw/README.md)
 
-- :simple-cloudera:{ .lg .middle } &nbsp; **Lab 4. Cloudera AI**
+- :simple-cloudera:{ .lg .middle } &nbsp; **Lab 2. Cloudera AI**
 
     ***
 
@@ -63,7 +63,7 @@ Welcome to this  Hands on Lab, where you'll explore the full data lifecycle thro
 
     [:octicons-arrow-right-24: Go to Cloudera AI Lab Guide](labs/lab4-cai/README.md)
 
-- :simple-cloudera:{ .lg .middle } &nbsp; **Lab 5. Cloudera Data Vizualization**
+- :simple-cloudera:{ .lg .middle } &nbsp; **Lab 3. Cloudera Data Vizualization**
 
     ***
 
