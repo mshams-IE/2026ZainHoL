@@ -1,4 +1,4 @@
-# Lab 5 - Cloudera Data Vizualization
+# Lab 3 - Cloudera Data Vizualization
 
 In this lab you will dive deeper into Cloudera Data Vizualization by using the output of the machine learning model to enrich your DataViz application.
 
@@ -18,7 +18,7 @@ Ensure the following requirements are met in order to run this exercise:
 
 - [ ] Name of the Impala Data Warehouse assigned to your user
 - [ ] Name of Data Vizualization Cluster assigned to your user
-- [ ] Cloudera AI models deployed as part of [Lab 4 - Cloudera AI](../lab4-cai/README.md)
+- [ ] Cloudera AI models deployed as part of [Lab 2 - Cloudera AI](../lab4-cai/README.md)
 
 !!! info
     The workshop instructor will assign your user to a Data Warehouse and Data Vizualisation cluster.
