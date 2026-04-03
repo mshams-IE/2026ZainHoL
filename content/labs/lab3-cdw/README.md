@@ -234,4 +234,4 @@ Add the fourth and last visual element, which is a table with the dimensions and
 
 Save the dashboard by clicking the button **Save** from the top menu.
 
-**End of Lab 3**
+**End of Lab 1**
