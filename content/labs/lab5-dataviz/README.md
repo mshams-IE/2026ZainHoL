@@ -2,6 +2,9 @@
 
 In this lab you will dive deeper into Cloudera Data Vizualization by using the output of the machine learning model to enrich your DataViz application.
 
+!!! info 
+    The screenshots below are provided for guidance only and may not reflect exact details. Please read the lab steps carefully
+
 **Goals**
 
 - [ ] Enrich Data Viz application with real time model scoring
