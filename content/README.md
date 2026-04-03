@@ -13,7 +13,7 @@ Welcome to this  Hands on Lab, where you'll explore the full data lifecycle thro
     Click the reset button to start again if you make a mistake.
     
     <div class="username-input-container">
-        <input type="text" id="user-username-input" placeholder="e.g., john.doe">
+        <input type="text" id="user-username-input" placeholder="e.g., user0xx">
         <button id="user-username-save">UPDATE EXAMPLES</button>
         <button id="user-username-clear">RESET</button>
     </div>
