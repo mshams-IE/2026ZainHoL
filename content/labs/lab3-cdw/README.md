@@ -1,6 +1,7 @@
 # Lab 1 - Cloudera Data Warehouse
 
-In this lab you will take a tour of Cloudera Data Warehouse by querying data from the Open Data Lakehouse and building a dashboard to visualize the results.
+In this lab you will take a tour of Cloudera Data Warehouse by querying data from the Open Data Lakehouse and building a dashboard to visualize the results. 
+**The screenshots below are provided for guidance only and may not reflect exact details. Please read the lab steps carefully !!**
 
 **Goals**
 
@@ -151,7 +152,7 @@ In Data Visualization, click on the **Data Viz** button for the cluster instance
 
 #### Create a Dataset in Data Vizualization
 
-Once in Data Visualization, go to the **Data** option from the top menu, and then to the Connector of the form _viz-impala-cxn-00N_ from the left menu.
+Once in Data Visualization, go to the **Data** option from the top menu, and then select your assigned data warehouse from the left menu under all connections.
 
 ![CDW Data Viz Connectors](cdw_dv_connectors.png)
 
@@ -164,7 +165,7 @@ Enter the information for the new data source as follows:
 
 - **Dataset title**: Use the naming convention `USERNAME.telco_curated_data`
 - **Dataset Source**: Select `From table`
-- **Select Database**: Enter your Workload Username, `USERNAME`
+- **Select Database**: telcodb
 - **Select Table**: Select `telco_data_curated`
 
 Click on **CREATE** to create the new Dataset.
@@ -212,7 +213,7 @@ To add a new visual element, click on the button **Visuals** from the right menu
 
 ![CDW Data Viz Dashboard Step 2](cdw_dv_dashboard_step2.png)
 
-Add the first visual element, which is a Pie Chart with the Dimensions **churn** and **contract**, with the Measures of **Record count**. Once finished, click the button **Refresh Visual**. Set the title of the visual to `Churn by type of contract`.
+Add the first visual element, which is a Pie Chart with few drag and drop add the Dimensions **churn** and **contract**, and the Measures of **Record count**. Once finished, click the button **Refresh Visual**. Set the title of the visual to `Churn by type of contract`.
 
 ![CDW Data Viz Dashboard Step 3](cdw_dv_dashboard_step3.png)
 
