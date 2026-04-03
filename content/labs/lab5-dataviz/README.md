@@ -137,4 +137,4 @@ Finish the process of updating the dashboard by clicking the button **SAVE** fro
 
 ![CDW Data Viz Dashboard CML Field Step 18](cdw_dv_cml_dashboard_step18.png)
 
-**End of Lab 5**
+**End of Lab 3**
