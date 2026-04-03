@@ -13,7 +13,7 @@ Hands on Lab for showcasing the Cloudera on cloud Data Lifecycle using a Telco C
 
 | Resource | Description |
 |----------|-------------|
-| **🌐 View the Lab Guide** | **[Live MkDocs Site](https://github.com/mshams-IE/pages/GOES/hol-004-telco-churn-data-lifecycle/)**<br/>Browse the rendered lab guide. |
+| **🌐 View the Lab Guide** | **[Live MkDocs Site](https://mshams-ie.github.io/hol-004-telco-churn-data-lifecycle/)**<br/>Browse the rendered lab guide. |
 | **📋 Instructor Guide** | **[Instructor README](./instructor/README.md)**<br/>Setup tips, lab objectives, and facilitation notes. |
 | **🗂️ Raw Lab Content** | **[Markdown Sources](./content/)**<br/>The `.md` files used to generate the site—fork, tweak, or extend! |
 
