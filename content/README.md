@@ -18,15 +18,11 @@ Welcome to this  Hands on Lab, where you'll explore the full data lifecycle thro
         <button id="user-username-clear">RESET</button>
     </div>
 
-    ```sql title="Test Block"
-    changed_user=USERNAME;
-    ```
-
-    `changed_user=USERNAME;`
+      `changed_user=USERNAME;`
     
 !!! info "What to expect"
-    - Ingest real time data to an Open Lakehouse - this step is already done on your belhaf before the lab , no extra actions is required from your side
-    - Run Data Engineering transformation  - this step is already done on your belhaf before the lab , no extra actions is required from your side
+    - Ingest real time data to an Open Lakehouse - this step is already done on your belhaf before the lab , no extra actions are required from your side
+    - Run Data Engineering transformation  - this step is already done on your belhaf before the lab , no extra actions are required from your side
     - Query/explore data and build Data Viz applications
     - Train and deploy a ML model to predict customer churn
     - Enrich data analytics with real time scoring
