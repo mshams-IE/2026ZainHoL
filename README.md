@@ -13,7 +13,7 @@ Hands on Lab for showcasing the Cloudera on cloud Data and AI using a Telco data
 
 | Resource | Description |
 |----------|-------------|
-| **🌐 View the Lab Guide** | **[Live MkDocs Site](https://mshams-ie.github.io/hol-telco-churn-CML/index.html)**<br/>Browse the rendered lab guide. |
+| **🌐 View the Lab Guide** | **[Live MkDocs Site](https://mshams-ie.github.io/2026ZainHoL/)**<br/>Browse the rendered lab guide. |
 | **📋 Instructor Guide** | **[Instructor README](./instructor/README.md)**<br/>Setup tips, lab objectives, and facilitation notes. |
 | **🗂️ Raw Lab Content** | **[Markdown Sources](./content/)**<br/>The `.md` files used to generate the site—fork, tweak, or extend! |
 
