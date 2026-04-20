@@ -42,7 +42,7 @@ use_directory_urls: false
 nav:
     - Home: 'README.md'
     - Labs:
-        - Day 1 - Cloudera Data Warehouse: 'labs/lab3-cdw/README.md'
+        - Day 1 - Cloudera Data Lakehouse: 'labs/lab3-cdw/README.md'
         - Day 2 - Cloudera AI: 'labs/lab4-cai/README.md'
         - Day 3 - Cloudera Data Federation: 'labs/lab5-dataviz/README.md'
   #  - Guides:
