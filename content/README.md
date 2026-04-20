@@ -38,13 +38,13 @@ Welcome to this  Hands on Lab, where you'll explore the traditional ML lifecycle
 
     **Goals**
 
-    - [ ] Configure Cloudera Data Warehouse
+    - [ ] Configure Cloudera Data Lakehouse
     - [ ] Query data in Iceberg
     - [ ] Created a visualization within Cloudera Data Viz
 
     ***
 
-    [:octicons-arrow-right-24: Go to Cloudera Data Warehouse Lab Guide](labs/lab3-cdw/README.md)
+    [:octicons-arrow-right-24: Go to Cloudera Data Lakehouse Lab Guide](labs/lab3-cdw/README.md)
 
 - :simple-cloudera:{ .lg .middle } &nbsp; **Day 2. Cloudera AI**
 
