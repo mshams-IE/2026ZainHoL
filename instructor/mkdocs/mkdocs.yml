@@ -44,7 +44,7 @@ nav:
     - Labs:
         - Lab 1 - Cloudera Data Warehouse: 'labs/lab3-cdw/README.md'
         - Lab 2 - Cloudera AI: 'labs/lab4-cai/README.md'
-        - Lab 3 - Cloudera Data Vizualization: 'labs/lab5-dataviz/README.md'
+        - Lab 3 - Cloudera Data Federation: 'labs/lab5-dataviz/README.md'
   #  - Guides:
    #     - Cloudera on cloud access: 'guides/cdp-account/README.md'
 
