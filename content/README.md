@@ -59,7 +59,7 @@ Welcome to this  Hands on Lab, where you'll explore the traditional ML lifecycle
 
     [:octicons-arrow-right-24: Go to Cloudera AI Lab Guide](labs/lab4-cai/README.md)
 
-- :simple-cloudera:{ .lg .middle } &nbsp; **Lab 3. Cloudera Data Vizualization**
+- :simple-cloudera:{ .lg .middle } &nbsp; **Lab 3. Cloudera Data Federation**
 
     ***
 
